@@ -29,10 +29,16 @@ statement.from_balance  #=> #Decimal<-190.40>
 statement.to_balance    #=> #Decimal<-241.21>
 
 [operation | _] = statement.operations
-operation.label   #=> "PRLV SEPA TEST CABINET"
-operation.amount  #=> #Decimal<-32.21>
-operation.details #=> [%{qualifier: "LIB", info: "..."}, ...]
+operation.label                    #=> "PRLV SEPA TEST CABINET"
+operation.amount                   #=> #Decimal<-32.21>
+operation.details.operation_reference #=> "REFERENCE"
+operation.details.debtor           #=> "INTERNET SFR"
+operation.details.fee              #=> #Decimal<0.79>  (when a FEE detail is present)
 ```
+
+The `05` detail records are decoded into a `CFONB.Operation.Details` struct
+(qualifiers such as `LIB`, `REF`, `RCN`, `NPY`, `FEE`, `MMO`, …). Unrecognized
+qualifiers are preserved under `details.unknown`.
 
 `CFONB.parse/1` returns `{:ok, [%CFONB.Statement{}]}` or `{:error, reason}`.
 Use `CFONB.parse!/1` if you prefer raising on invalid input.
@@ -41,10 +47,9 @@ See [`FORMAT.md`](FORMAT.md) for the exact CFONB 120 field layout.
 
 ## Scope & roadmap
 
-- **v0.1** — CFONB 120 account statement (all record types). `05` details are
-  exposed generically as `%{qualifier, info}`.
-- Planned — qualifier-specific detail decoding (fees, references, …), the
-  240-character format, and CFONB generation (e.g. transfer orders).
+- **v0.1** — CFONB 120 account statement (all record types), with
+  qualifier-specific `05` detail decoding into `CFONB.Operation.Details`.
+- Planned — the 240-character format, and CFONB generation (e.g. transfer orders).
 
 ## Credits & license
 

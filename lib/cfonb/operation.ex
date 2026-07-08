@@ -3,14 +3,14 @@ defmodule CFONB.Operation do
   A single operation (movement) on a statement, built from a `04` record and
   enriched by any following `05` detail records.
 
-  In this first version, `05` details are exposed generically as a list of
-  `%{qualifier: String.t(), info: String.t()}`. Richer, qualifier-specific
-  decoding (fees, references, …) is planned for a later version.
+  The `05` details are decoded into a `CFONB.Operation.Details` struct, so an
+  operation exposes ready-to-use fields such as `details.debtor` or
+  `details.operation_reference`.
 
   Field names mirror the [Ruby `cfonb` gem](https://github.com/pennylane-hq/cfonb).
   """
 
-  @type detail :: %{qualifier: String.t(), info: String.t()}
+  alias CFONB.Operation.Details
 
   @type t :: %__MODULE__{
           amount: Decimal.t(),
@@ -25,7 +25,7 @@ defmodule CFONB.Operation do
           rejection_code: String.t(),
           exoneration_code: String.t(),
           unavailability_code: String.t(),
-          details: [detail]
+          details: Details.t()
         }
 
   defstruct [
@@ -41,7 +41,7 @@ defmodule CFONB.Operation do
     :rejection_code,
     :exoneration_code,
     :unavailability_code,
-    details: []
+    details: %Details{}
   ]
 
   @doc false
@@ -60,13 +60,13 @@ defmodule CFONB.Operation do
       rejection_code: fields.rejection_code,
       exoneration_code: fields.exoneration_code,
       unavailability_code: fields.unavailability_code,
-      details: []
+      details: %Details{}
     }
   end
 
   @doc false
-  @spec add_detail(t, detail) :: t
-  def add_detail(%__MODULE__{} = operation, detail) do
-    %{operation | details: operation.details ++ [detail]}
+  @spec add_detail(t, %{qualifier: String.t(), info: binary}) :: t
+  def add_detail(%__MODULE__{} = operation, %{qualifier: qualifier, info: info}) do
+    %{operation | details: Details.merge(operation.details, qualifier, info)}
   end
 end

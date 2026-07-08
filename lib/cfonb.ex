@@ -236,7 +236,9 @@ defmodule CFONB do
       _date::binary-size(6), _reserved2::binary-size(5), qualifier::binary-size(3),
       info::binary-size(70), _reserved3::binary-size(2)>> = record
 
-    {:ok, {:detail, %{qualifier: trim(qualifier), info: trim(info)}}}
+    # `info` is kept raw (70 chars): qualifier-specific decoders slice it by
+    # position. See `CFONB.Operation.Details`.
+    {:ok, {:detail, %{qualifier: trim(qualifier), info: info}}}
   end
 
   ## ----------------------------------------------------------------------------

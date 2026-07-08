@@ -48,12 +48,52 @@ defmodule CFONBTest do
       assert operation.internal_code == "9162"
     end
 
-    test "attaches 05 detail lines to their operation", %{statements: [statement | _]} do
+    test "decodes 05 detail lines into structured fields", %{statements: [statement | _]} do
       [operation | _] = statement.operations
+      details = operation.details
 
-      assert length(operation.details) > 0
-      assert Enum.any?(operation.details, &(&1.qualifier == "LIB"))
-      assert Enum.any?(operation.details, &(&1.qualifier == "REF"))
+      # LIB repeated twice -> concatenated
+      assert details.free_label == "MENSUEAUHTR13133\nMENSUEAUHTR13DUP"
+      # REF -> operation_reference
+      assert details.operation_reference == "REFERENCE"
+      # RCN -> client_reference + purpose
+      assert details.client_reference == "OTHER REFERENCE"
+      assert details.purpose == "PURPOSE"
+      # NPY -> debtor
+      assert details.debtor == "INTERNET SFR"
+    end
+
+    test "keeps unrecognized qualifiers under :unknown (concatenating repeats)",
+         %{statements: [statement | _]} do
+      details = statement.operations |> hd() |> Map.fetch!(:details)
+
+      assert details.unknown["AAA"] == "INTERNETA AAA\nINTERNETA ABB"
+      assert details.unknown["BBB"] == "INTERNETE BBB"
+      assert Map.has_key?(details.unknown, "N Y")
+    end
+  end
+
+  describe "rich 05 decoding (synthetic records)" do
+    alias CFONB.Operation.Details
+
+    test "FEE decodes currency and a scaled decimal amount" do
+      # currency "EUR" | scale "2" | 14-digit amount "00000000000079"
+      info = pad70("EUR200000000000079")
+      details = Details.merge(%Details{}, "FEE", info)
+
+      assert details.fee_currency == "EUR"
+      assert Decimal.equal?(details.fee, Decimal.new("0.79"))
+    end
+
+    test "MMO decodes original amount and optional exchange rate" do
+      # currency "USD" | scale "2" | amount(14) "00000000012345" |
+      # rate scale "4" at pos 18 | rate(4) "1082" at pos 26
+      info = pad70("USD200000000012345" <> "4" <> String.duplicate(" ", 7) <> "1082")
+      details = Details.merge(%Details{}, "MMO", info)
+
+      assert details.original_currency == "USD"
+      assert Decimal.equal?(details.original_amount, Decimal.new("123.45"))
+      assert Decimal.equal?(details.exchange_rate, Decimal.new("0.1082"))
     end
   end
 
@@ -88,4 +128,7 @@ defmodule CFONBTest do
       assert {:ok, []} = CFONB.parse("")
     end
   end
+
+  # Pads a detail info zone to its fixed 70-char width.
+  defp pad70(string), do: string <> String.duplicate(" ", 70 - byte_size(string))
 end
