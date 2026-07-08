@@ -97,6 +97,101 @@ defmodule CFONBTest do
     end
   end
 
+  describe "Ruby-parity features" do
+    setup do
+      {:ok, [statement | _]} = CFONB.parse(@example)
+      %{statement: statement}
+    end
+
+    test "rib/1 produces a valid 23-char French RIB", %{statement: statement} do
+      rib = CFONB.Statement.rib(statement)
+      assert String.length(rib) == 23
+
+      <<bank::binary-size(5), branch::binary-size(5), account::binary-size(11),
+        key::binary-size(2)>> = rib
+
+      # RIB control key: (89*bank + 15*branch + 3*account + key) mod 97 == 0
+      checksum =
+        89 * String.to_integer(bank) + 15 * String.to_integer(branch) +
+          3 * String.to_integer(account) + String.to_integer(key)
+
+      assert rem(checksum, 97) == 0
+    end
+
+    test "iban/1 produces a valid French IBAN", %{statement: statement} do
+      iban = CFONB.Statement.iban(statement)
+
+      assert String.starts_with?(iban, "FR")
+      assert String.ends_with?(iban, CFONB.Statement.rib(statement))
+
+      # ISO 7064 mod-97-10: move the first 4 chars to the end, convert letters,
+      # the whole number mod 97 must equal 1.
+      <<head::binary-size(4), rest::binary>> = iban
+
+      numeric =
+        (rest <> head)
+        |> String.to_charlist()
+        |> Enum.map_join("", fn
+          char when char in ?A..?Z -> Integer.to_string(char - 55)
+          char -> <<char>>
+        end)
+
+      assert rem(String.to_integer(numeric), 97) == 1
+    end
+
+    test "type_code/1 is the interbank code plus C/D direction", %{statement: statement} do
+      [operation | _] = statement.operations
+      # interbank code "B1", debit (negative amount) -> "D"
+      assert CFONB.Operation.type_code(operation) == "B1D"
+    end
+
+    test "raw fields preserve the original record lines", %{statement: statement} do
+      assert String.starts_with?(statement.begin_raw, "01")
+      assert String.length(statement.begin_raw) == 120
+      assert String.starts_with?(statement.end_raw, "07")
+
+      [operation | _] = statement.operations
+      assert String.starts_with?(operation.raw, "04")
+      # the 04 line plus its twelve 05 detail lines
+      assert operation.raw |> String.split("\n") |> length() == 13
+
+      # Statement.raw/1 rebuilds a bundle bounded by the balance lines
+      bundle = CFONB.Statement.raw(statement)
+      assert String.starts_with?(bundle, statement.begin_raw)
+      assert String.ends_with?(bundle, statement.end_raw)
+    end
+
+    test "parse_operation/1 parses a standalone operation with its details" do
+      op_input = @example |> String.split("\n") |> Enum.slice(2, 13) |> Enum.join("\n")
+
+      assert {:ok, operation} = CFONB.parse_operation(op_input)
+      assert Decimal.equal?(operation.amount, Decimal.new("-32.21"))
+      assert operation.details.operation_reference == "REFERENCE"
+    end
+
+    test "optimistic: true skips invalid records instead of aborting" do
+      stray = @example |> String.split("\n") |> Enum.at(2)
+      input = stray <> "\n" <> @example
+
+      assert {:error, :operation_outside_statement} = CFONB.parse(input)
+      assert {:ok, statements} = CFONB.parse(input, optimistic: true)
+      assert length(statements) == 2
+    end
+  end
+
+  describe "RIB / IBAN on the canonical example (with a letter in the account)" do
+    # Canonical French example: IBAN FR1420041010050500013M02606
+    @canonical %CFONB.Statement{bank: "20041", branch: "01005", account: "0500013M026"}
+
+    test "rib/1 matches the reference RIB" do
+      assert CFONB.Statement.rib(@canonical) == "20041010050500013M02606"
+    end
+
+    test "iban/1 matches the reference IBAN" do
+      assert CFONB.Statement.iban(@canonical) == "FR1420041010050500013M02606"
+    end
+  end
+
   describe "120-char padding" do
     test "a record whose trailing padding was stripped is still parsed" do
       lines = String.split(@example, "\n")

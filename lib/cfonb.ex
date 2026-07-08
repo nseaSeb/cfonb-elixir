@@ -58,24 +58,56 @@ defmodule CFONB do
   Parses the content of a CFONB 120 file into a list of `CFONB.Statement`.
 
   Returns `{:ok, statements}` or `{:error, reason}`.
+
+  ## Options
+
+    * `:optimistic` (default `false`) — when `true`, invalid records are skipped
+      instead of aborting, and whatever statements could be built are returned.
   """
-  @spec parse(binary) :: {:ok, [Statement.t()]} | {:error, term}
-  def parse(input) when is_binary(input) do
+  @spec parse(binary, keyword) :: {:ok, [Statement.t()]} | {:error, term}
+  def parse(input, opts \\ []) when is_binary(input) do
     input
     |> records()
-    |> reduce(%{statements: [], statement: nil, operation: nil})
+    |> reduce(%{statements: [], statement: nil, operation: nil}, optimistic?(opts))
   end
 
   @doc """
-  Same as `parse/1` but raises `ArgumentError` on invalid input.
+  Parses a standalone operation (`04` and its `05` details, without a
+  surrounding statement) into a single `CFONB.Operation`.
+
+  Returns `{:ok, operation}` (or `{:ok, nil}` if the input has none), or
+  `{:error, reason}`. Accepts the same `:optimistic` option as `parse/2`.
   """
-  @spec parse!(binary) :: [Statement.t()]
-  def parse!(input) do
-    case parse(input) do
+  @spec parse_operation(binary, keyword) :: {:ok, Operation.t() | nil} | {:error, term}
+  def parse_operation(input, opts \\ []) when is_binary(input) do
+    input
+    |> records()
+    |> reduce_operation(nil, optimistic?(opts))
+  end
+
+  @doc """
+  Same as `parse/2` but raises `ArgumentError` on invalid input.
+  """
+  @spec parse!(binary, keyword) :: [Statement.t()]
+  def parse!(input, opts \\ []) do
+    case parse(input, opts) do
       {:ok, statements} -> statements
       {:error, reason} -> raise ArgumentError, "invalid CFONB input: #{inspect(reason)}"
     end
   end
+
+  @doc """
+  Same as `parse_operation/2` but raises `ArgumentError` on invalid input.
+  """
+  @spec parse_operation!(binary, keyword) :: Operation.t() | nil
+  def parse_operation!(input, opts \\ []) do
+    case parse_operation(input, opts) do
+      {:ok, operation} -> operation
+      {:error, reason} -> raise ArgumentError, "invalid CFONB operation: #{inspect(reason)}"
+    end
+  end
+
+  defp optimistic?(opts), do: Keyword.get(opts, :optimistic, false)
 
   ## ----------------------------------------------------------------------------
   ## Splitting into 120-char records (padding-tolerant)
@@ -108,15 +140,46 @@ defmodule CFONB do
   ## Stateful reduction over records
   ## ----------------------------------------------------------------------------
 
-  defp reduce([], %{statement: nil, statements: acc}), do: {:ok, Enum.reverse(acc)}
-  defp reduce([], %{statement: %Statement{}}), do: {:error, :unterminated_statement}
+  # End of input: return completed statements. Any statement left open (no `07`)
+  # is dropped, matching the reference implementation.
+  defp reduce([], %{statements: acc}, _optimistic), do: {:ok, Enum.reverse(acc)}
 
-  defp reduce([record | rest], state) do
-    with {:ok, parsed} <- parse_record(record),
-         {:ok, state} <- step(parsed, state) do
-      reduce(rest, state)
+  defp reduce([record | rest], state, optimistic) do
+    result =
+      with {:ok, parsed} <- parse_record(record) do
+        step(parsed, state)
+      end
+
+    case result do
+      {:ok, state} -> reduce(rest, state, optimistic)
+      {:error, _reason} when optimistic -> reduce(rest, state, optimistic)
+      {:error, _reason} = error -> error
     end
   end
+
+  defp reduce_operation([], operation, _optimistic), do: {:ok, operation}
+
+  defp reduce_operation([record | rest], operation, optimistic) do
+    result =
+      with {:ok, parsed} <- parse_record(record) do
+        operation_step(parsed, operation)
+      end
+
+    case result do
+      {:ok, operation} -> reduce_operation(rest, operation, optimistic)
+      {:error, _reason} when optimistic -> reduce_operation(rest, operation, optimistic)
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp operation_step({:operation, _}, %Operation{}), do: {:error, :operation_already_defined}
+  defp operation_step({:operation, fields}, nil), do: {:ok, Operation.new(fields)}
+  defp operation_step({:detail, _}, nil), do: {:error, :detail_outside_operation}
+
+  defp operation_step({:detail, detail}, operation),
+    do: {:ok, Operation.add_detail(operation, detail)}
+
+  defp operation_step({_kind, _}, _operation), do: {:error, :unhandled_line_code}
 
   defp step({:previous_balance, fields}, %{statement: nil} = state) do
     {:ok, %{state | statement: Statement.new(fields), operation: nil}}
@@ -188,7 +251,8 @@ defmodule CFONB do
           currency: trim(currency),
           account: trim(account),
           date: date,
-          amount: amount
+          amount: amount,
+          raw: record
         }}}
     end
   end
@@ -224,7 +288,8 @@ defmodule CFONB do
           exoneration_code: trim(exoneration),
           unavailability_code: trim(unavailability),
           amount: amount,
-          reference: trim(reference)
+          reference: trim(reference),
+          raw: record
         }}}
     end
   end
@@ -238,7 +303,7 @@ defmodule CFONB do
 
     # `info` is kept raw (70 chars): qualifier-specific decoders slice it by
     # position. See `CFONB.Operation.Details`.
-    {:ok, {:detail, %{qualifier: trim(qualifier), info: info}}}
+    {:ok, {:detail, %{qualifier: trim(qualifier), info: info, raw: record}}}
   end
 
   ## ----------------------------------------------------------------------------

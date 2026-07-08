@@ -25,7 +25,8 @@ defmodule CFONB.Operation do
           rejection_code: String.t(),
           exoneration_code: String.t(),
           unavailability_code: String.t(),
-          details: Details.t()
+          details: Details.t(),
+          raw: String.t() | nil
         }
 
   defstruct [
@@ -41,6 +42,7 @@ defmodule CFONB.Operation do
     :rejection_code,
     :exoneration_code,
     :unavailability_code,
+    :raw,
     details: %Details{}
   ]
 
@@ -60,13 +62,28 @@ defmodule CFONB.Operation do
       rejection_code: fields.rejection_code,
       exoneration_code: fields.exoneration_code,
       unavailability_code: fields.unavailability_code,
+      raw: fields.raw,
       details: %Details{}
     }
   end
 
   @doc false
-  @spec add_detail(t, %{qualifier: String.t(), info: binary}) :: t
-  def add_detail(%__MODULE__{} = operation, %{qualifier: qualifier, info: info}) do
-    %{operation | details: Details.merge(operation.details, qualifier, info)}
+  @spec add_detail(t, %{qualifier: String.t(), info: binary, raw: binary}) :: t
+  def add_detail(%__MODULE__{} = operation, %{qualifier: qualifier, info: info, raw: raw}) do
+    %{
+      operation
+      | details: Details.merge(operation.details, qualifier, info),
+        raw: operation.raw <> "\n" <> raw
+    }
+  end
+
+  @doc """
+  Returns the operation type code: the interbank operation code followed by its
+  direction — `"C"` (credit) when the amount is positive, `"D"` (debit) otherwise.
+  """
+  @spec type_code(t) :: String.t()
+  def type_code(%__MODULE__{interbank_code: code, amount: amount}) do
+    direction = if Decimal.compare(amount, Decimal.new(0)) == :gt, do: "C", else: "D"
+    code <> direction
   end
 end

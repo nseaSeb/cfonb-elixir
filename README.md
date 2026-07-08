@@ -40,6 +40,24 @@ The `05` detail records are decoded into a `CFONB.Operation.Details` struct
 (qualifiers such as `LIB`, `REF`, `RCN`, `NPY`, `FEE`, `MMO`, …). Unrecognized
 qualifiers are preserved under `details.unknown`.
 
+The library also derives banking identifiers and exposes the raw records:
+
+```elixir
+CFONB.Statement.rib(statement)          #=> "20041010050500013M02606"
+CFONB.Statement.iban(statement)         #=> "FR1420041010050500013M02606"
+CFONB.Operation.type_code(operation)    #=> "B1D"  (interbank code + credit/debit)
+statement.begin_raw                     #=> the original "01" line
+CFONB.Statement.raw(statement)          #=> the statement's records, rebuilt
+```
+
+Other entry points:
+
+```elixir
+CFONB.parse_operation(input)      # parse a standalone 04 (+ its 05s)
+CFONB.parse(input, optimistic: true)   # skip invalid records, best effort
+CFONB.parse!(input)               # raising variants
+```
+
 `CFONB.parse/1` returns `{:ok, [%CFONB.Statement{}]}` or `{:error, reason}`.
 Use `CFONB.parse!/1` if you prefer raising on invalid input.
 
@@ -47,8 +65,9 @@ See [`FORMAT.md`](FORMAT.md) for the exact CFONB 120 field layout.
 
 ## Scope & roadmap
 
-- **v0.1** — CFONB 120 account statement (all record types), with
-  qualifier-specific `05` detail decoding into `CFONB.Operation.Details`.
+- **v0.1** — CFONB 120 account statement (all record types), qualifier-specific
+  `05` decoding, RIB/IBAN derivation, raw-record access, standalone-operation and
+  optimistic parsing. At feature parity with the reference Ruby gem.
 - Planned — the 240-character format, and CFONB generation (e.g. transfer orders).
 
 ## Credits & license
