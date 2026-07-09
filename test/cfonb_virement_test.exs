@@ -65,6 +65,36 @@ defmodule CFONB.VirementTest do
       assert {:error, {:invalid_iban, _}} = Rib.from_iban("DE89370400440532013000")
       assert {:error, {:invalid_iban, _}} = Rib.from_iban("FR14")
     end
+
+    test "rejects charset-invalid IBANs instead of raising" do
+      # 27 chars, one digit replaced by '#'
+      corrupted = "FR14" <> "#" <> String.slice("FR1420041010050500013M02606", 5, 22)
+      assert {:error, {:invalid_iban, _}} = Rib.from_iban(corrupted)
+
+      # 26 chars ending with a 2-byte codepoint: 27 bytes, must still error
+      multibyte = String.slice("FR1420041010050500013M02606", 0, 25) <> "é"
+      assert {:error, {:invalid_iban, _}} = Rib.from_iban(multibyte)
+    end
+
+    test "a charset-invalid IBAN reaches Virement.encode as {:error, _}, not a raise" do
+      corrupted = "FR14" <> "#" <> String.slice("FR1420041010050500013M02606", 5, 22)
+
+      order = %Virement{
+        nom_emetteur: "X",
+        iban: corrupted,
+        beneficiaires: [
+          %Beneficiaire{
+            nom: "A",
+            etablissement: "30004",
+            guichet: "00003",
+            compte: "12345678901",
+            montant: Decimal.new("1")
+          }
+        ]
+      }
+
+      assert {:error, {:invalid_iban, _}} = Virement.encode(order)
+    end
   end
 
   describe "Virement.encode/2 — golden output" do

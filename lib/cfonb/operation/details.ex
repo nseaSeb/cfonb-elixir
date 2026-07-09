@@ -131,35 +131,53 @@ defmodule CFONB.Operation.Details do
     end
   end
 
-  # FEE: currency (3) + scale (1) + amount (14 digits).
+  # FEE: currency (3) + scale (1) + amount (14 digits). A malformed or blank
+  # numeric zone must neither crash the parse (a raise would defeat
+  # `optimistic` mode) nor invent a 0.00 fee: the raw detail is preserved
+  # under `unknown` instead.
   defp fee(details, detail) do
-    scale = detail |> String.slice(3, 1) |> to_int()
-
-    %{
-      details
-      | fee_currency: String.slice(detail, 0, 3),
-        fee: to_decimal(String.slice(detail, 4, 14), scale)
-    }
+    with {:ok, scale} <- digits_or_zero(String.slice(detail, 3, 1)),
+         {:ok, amount} <- digits(String.slice(detail, 4, 14)) do
+      %{
+        details
+        | fee_currency: String.slice(detail, 0, 3),
+          fee: to_decimal(amount, scale)
+      }
+    else
+      :error -> %{details | unknown: put_unknown(details.unknown, "FEE", detail)}
+    end
   end
 
   # MMO: original currency (3) + scale (1) + amount (14), plus an optional
   # exchange rate: value (4) at offset 26 with its own scale (1) at offset 18.
+  # Same fallback-to-`unknown` policy as FEE for malformed numeric zones.
   defp exchange(details, detail) do
-    scale = detail |> String.slice(3, 1) |> to_int()
+    with {:ok, scale} <- digits_or_zero(String.slice(detail, 3, 1)),
+         {:ok, amount} <- digits(String.slice(detail, 4, 14)) do
+      details = %{
+        details
+        | original_currency: String.slice(detail, 0, 3),
+          original_amount: to_decimal(amount, scale)
+      }
 
-    details = %{
-      details
-      | original_currency: String.slice(detail, 0, 3),
-        original_amount: to_decimal(String.slice(detail, 4, 14), scale)
-    }
+      exchange_rate(details, detail)
+    else
+      :error -> %{details | unknown: put_unknown(details.unknown, "MMO", detail)}
+    end
+  end
 
+  defp exchange_rate(details, detail) do
     case detail |> String.slice(26, 4) |> String.trim() do
       "" ->
         details
 
       rate ->
-        rate_scale = detail |> String.slice(18, 1) |> to_int()
-        %{details | exchange_rate: to_decimal(rate, rate_scale)}
+        with {:ok, rate} <- digits(rate),
+             {:ok, rate_scale} <- digits_or_zero(String.slice(detail, 18, 1)) do
+          %{details | exchange_rate: to_decimal(rate, rate_scale)}
+        else
+          :error -> %{details | unknown: put_unknown(details.unknown, "MMO", detail)}
+        end
     end
   end
 
@@ -182,12 +200,25 @@ defmodule CFONB.Operation.Details do
     end
   end
 
-  defp to_decimal(digits, scale), do: %Decimal{sign: 1, coef: to_int(digits), exp: -scale}
+  defp to_decimal(coef, scale) when is_integer(coef),
+    do: %Decimal{sign: 1, coef: coef, exp: -scale}
 
-  defp to_int(binary) do
+  # A required numeric zone: non-blank, all digits.
+  defp digits(binary) do
     case String.trim(binary) do
-      "" -> 0
-      digits -> String.to_integer(digits)
+      "" ->
+        :error
+
+      trimmed ->
+        if trimmed =~ ~r/^\d+$/, do: {:ok, String.to_integer(trimmed)}, else: :error
+    end
+  end
+
+  # A numeric zone where blank means 0 (scales).
+  defp digits_or_zero(binary) do
+    case String.trim(binary) do
+      "" -> {:ok, 0}
+      _ -> digits(binary)
     end
   end
 end

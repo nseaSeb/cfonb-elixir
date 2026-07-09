@@ -95,6 +95,28 @@ defmodule CFONBTest do
       assert Decimal.equal?(details.original_amount, Decimal.new("123.45"))
       assert Decimal.equal?(details.exchange_rate, Decimal.new("0.1082"))
     end
+
+    test "FEE with a non-digit scale falls back to unknown instead of crashing" do
+      details = Details.merge(%Details{}, "FEE", pad70("EURX0000000000079"))
+
+      assert details.fee == nil
+      assert details.fee_currency == nil
+      assert details.unknown["FEE"] =~ "EURX"
+    end
+
+    test "FEE with a blank amount does not invent a 0.00 fee" do
+      details = Details.merge(%Details{}, "FEE", pad70("EUR2"))
+
+      assert details.fee == nil
+      assert Map.has_key?(details.unknown, "FEE")
+    end
+
+    test "MMO with a non-digit amount falls back to unknown instead of crashing" do
+      details = Details.merge(%Details{}, "MMO", pad70("USD20000000000Z345"))
+
+      assert details.original_amount == nil
+      assert Map.has_key?(details.unknown, "MMO")
+    end
   end
 
   describe "Ruby-parity features" do
@@ -190,6 +212,20 @@ defmodule CFONBTest do
     test "iban/1 matches the reference IBAN" do
       assert CFONB.Statement.iban(@canonical) == "FR1420041010050500013M02606"
     end
+
+    test "rib/1 and iban/1 raise a clear error when no RIB is derivable" do
+      blank_bank = %CFONB.Statement{bank: "", branch: "01005", account: "0500013M026"}
+
+      assert_raise ArgumentError, ~r/cannot derive a RIB key/, fn ->
+        CFONB.Statement.rib(blank_bank)
+      end
+
+      dashed_account = %CFONB.Statement{bank: "20041", branch: "01005", account: "050-0013M02"}
+
+      assert_raise ArgumentError, ~r/cannot derive a RIB key/, fn ->
+        CFONB.Statement.iban(dashed_account)
+      end
+    end
   end
 
   describe "120-char padding" do
@@ -206,6 +242,62 @@ defmodule CFONBTest do
       assert statement.operations == []
       assert Decimal.equal?(statement.from_balance, Decimal.new("-190.40"))
       assert Decimal.equal?(statement.to_balance, Decimal.new("-241.21"))
+    end
+  end
+
+  describe "malformed numeric zones return errors (never raise)" do
+    test "a non-digit date is an error, and optimistic parsing skips it" do
+      record = balance_rec("01", date: "31XX26")
+
+      assert {:error, {:invalid_date, "31XX26"}} = CFONB.parse(record)
+      assert {:ok, []} = CFONB.parse(record, optimistic: true)
+    end
+
+    test "a non-digit scale is an error" do
+      assert {:error, {:invalid_scale, "X"}} = CFONB.parse(balance_rec("01", scale: "X"))
+    end
+
+    test "non-digit amount digits are an error" do
+      assert {:error, {:invalid_amount, _}} =
+               CFONB.parse(balance_rec("01", amount: "000000000A904{"))
+    end
+
+    test "a non-digit entry number is an error" do
+      assert {:error, {:invalid_number, "ABC1234"}} =
+               CFONB.parse(operation_rec(number: "ABC1234"))
+    end
+
+    test "a malformed 05 FEE record no longer aborts an optimistic parse" do
+      file =
+        Enum.join(
+          [
+            balance_rec("01"),
+            operation_rec(),
+            detail_rec("FEE", "EURX0000000000079"),
+            balance_rec("07")
+          ],
+          "\n"
+        )
+
+      assert {:ok, [statement]} = CFONB.parse(file, optimistic: true)
+      assert [operation] = statement.operations
+      assert operation.details.fee == nil
+      assert Map.has_key?(operation.details.unknown, "FEE")
+    end
+  end
+
+  describe "long physical lines" do
+    test "a non-multiple-of-120 tail surfaces as an invalid record instead of vanishing" do
+      line = balance_rec("01") <> balance_rec("07") <> String.duplicate("Z", 30)
+
+      assert {:error, {:invalid_record_code, "ZZ"}} = CFONB.parse(line)
+      assert {:ok, [%CFONB.Statement{}]} = CFONB.parse(line, optimistic: true)
+    end
+
+    test "an all-blank tail is treated as producer padding" do
+      line = balance_rec("01") <> balance_rec("07") <> String.duplicate(" ", 30)
+
+      assert {:ok, [%CFONB.Statement{}]} = CFONB.parse(line)
     end
   end
 
@@ -226,4 +318,59 @@ defmodule CFONBTest do
 
   # Pads a detail info zone to its fixed 70-char width.
   defp pad70(string), do: string <> String.duplicate(" ", 70 - byte_size(string))
+
+  # Synthetic 120-char records with malformed-zone overrides.
+  defp balance_rec(code, opts \\ []) do
+    scale = Keyword.get(opts, :scale, "2")
+    date = Keyword.get(opts, :date, "090726")
+    amount = Keyword.get(opts, :amount, "0000000001904{")
+
+    code <>
+      "20041" <>
+      "    " <>
+      "01005" <>
+      "EUR" <>
+      scale <>
+      " " <>
+      "0500013M026" <>
+      "  " <>
+      date <>
+      String.duplicate(" ", 50) <>
+      amount <>
+      String.duplicate(" ", 16)
+  end
+
+  defp operation_rec(opts \\ []) do
+    number = Keyword.get(opts, :number, "0000001")
+
+    "04" <>
+      "20041" <>
+      "B1  " <>
+      "01005" <>
+      "EUR" <>
+      "2" <>
+      " " <>
+      "0500013M026" <>
+      "B1" <>
+      "090726" <>
+      "  " <>
+      "090726" <>
+      String.pad_trailing("TEST", 32) <>
+      " " <> number <> " " <> " " <> "0000000001904{" <> String.duplicate(" ", 16)
+  end
+
+  defp detail_rec(qualifier, info) do
+    "05" <>
+      "20041" <>
+      "B1  " <>
+      "01005" <>
+      "EUR" <>
+      "2" <>
+      " " <>
+      "0500013M026" <>
+      "B1" <>
+      "090726" <>
+      String.duplicate(" ", 5) <>
+      qualifier <> (info <> String.duplicate(" ", 70 - byte_size(info))) <> "  "
+  end
 end

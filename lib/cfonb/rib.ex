@@ -47,9 +47,20 @@ defmodule CFONB.Rib do
   @doc """
   Computes the 2-digit French RIB key for the given `bank`, `branch` and
   `account` (returned as a zero-padded string).
+
+  Raises `ArgumentError` when no key is derivable: blank or non-numeric
+  `bank`/`branch`, or an `account` containing characters outside `[0-9A-Za-z]`.
+  Statements parsed from files with blank or free-form account zones fall in
+  that case — check the fields before calling.
   """
   @spec key(String.t(), String.t(), String.t()) :: String.t()
   def key(bank, branch, account) do
+    unless bank =~ ~r/^\d+$/ and branch =~ ~r/^\d+$/ and account =~ ~r/^[0-9A-Za-z]+$/ do
+      raise ArgumentError,
+            "cannot derive a RIB key from bank #{inspect(bank)}, branch " <>
+              "#{inspect(branch)}, account #{inspect(account)}"
+    end
+
     numeric_account = account |> String.upcase() |> convert_letters() |> String.to_integer()
 
     key =
@@ -107,8 +118,14 @@ defmodule CFONB.Rib do
     end
   end
 
-  defp validate_fr(<<"FR", _::binary>> = iban) when byte_size(iban) == 27, do: :ok
-  defp validate_fr(iban), do: {:error, {:invalid_iban, iban}}
+  # A French IBAN is FR + 2 check digits + the 23-char BBAN (5-digit bank,
+  # 5-digit branch, 11-alphanumeric account, 2-digit RIB key). Validating the
+  # structure up front keeps every later String.to_integer safe.
+  defp validate_fr(iban) do
+    if iban =~ ~r/^FR\d{2}\d{5}\d{5}[0-9A-Z]{11}\d{2}$/,
+      do: :ok,
+      else: {:error, {:invalid_iban, iban}}
+  end
 
   # ISO 7064 mod-97-10: move the first 4 chars to the end, convert letters to
   # numbers, the whole thing must be ≡ 1 (mod 97).

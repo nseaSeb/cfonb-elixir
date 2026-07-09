@@ -126,8 +126,19 @@ defmodule CFONB do
     cond do
       String.trim(line) == "" -> []
       byte_size(line) <= @record_size -> [pad(line)]
-      true -> for <<record::binary-size(@record_size) <- line>>, do: record
+      true -> chunk_records(line)
     end
+  end
+
+  defp chunk_records(<<record::binary-size(@record_size), rest::binary>>) do
+    [record | chunk_records(rest)]
+  end
+
+  # A trailing partial chunk is producer padding when blank; otherwise it is
+  # kept (padded) so strict parsing surfaces it as an invalid record instead
+  # of silently dropping data.
+  defp chunk_records(rest) do
+    if String.trim(rest) == "", do: [], else: [pad(rest)]
   end
 
   defp pad(line) when byte_size(line) < @record_size do
@@ -239,9 +250,8 @@ defmodule CFONB do
       date::binary-size(6), _reserved3::binary-size(50), amount::binary-size(14),
       _reserved4::binary-size(16)>> = record
 
-    scale = to_int(scale)
-
-    with {:ok, date} <- decode_date(date),
+    with {:ok, scale} <- decode_int(scale, {:invalid_scale, scale}),
+         {:ok, date} <- decode_date(date),
          {:ok, amount} <- decode_amount(amount, scale) do
       {:ok,
        {kind,
@@ -266,9 +276,9 @@ defmodule CFONB do
       exoneration::binary-size(1), unavailability::binary-size(1), amount::binary-size(14),
       reference::binary-size(16)>> = record
 
-    scale = to_int(scale)
-
-    with {:ok, date} <- decode_date(date),
+    with {:ok, scale} <- decode_int(scale, {:invalid_scale, scale}),
+         {:ok, number} <- decode_int(number, {:invalid_number, number}),
+         {:ok, date} <- decode_date(date),
          {:ok, value_date} <- decode_date(value_date),
          {:ok, amount} <- decode_amount(amount, scale) do
       {:ok,
@@ -284,7 +294,7 @@ defmodule CFONB do
           date: date,
           value_date: value_date,
           label: trim(label),
-          number: to_int(number),
+          number: number,
           exoneration_code: trim(exoneration),
           unavailability_code: trim(unavailability),
           amount: amount,
@@ -314,8 +324,9 @@ defmodule CFONB do
   defp decode_amount(<<digits::binary-size(13), specifier::binary-size(1)>>, scale) do
     case @amount_specifiers do
       %{^specifier => {sign, last_digit}} ->
-        coefficient = to_int(digits) * 10 + last_digit
-        {:ok, %Decimal{sign: sign, coef: coefficient, exp: -scale}}
+        with {:ok, units} <- decode_int(digits, {:invalid_amount, digits}) do
+          {:ok, %Decimal{sign: sign, coef: units * 10 + last_digit, exp: -scale}}
+        end
 
       _ ->
         {:error, {:invalid_amount_specifier, specifier}}
@@ -331,22 +342,32 @@ defmodule CFONB do
 
       _ ->
         <<day::binary-size(2), month::binary-size(2), year::binary-size(2)>> = raw
-        yy = String.to_integer(year)
-        full_year = if yy > 60, do: 1900 + yy, else: 2000 + yy
 
-        case Date.new(full_year, String.to_integer(month), String.to_integer(day)) do
-          {:ok, date} -> {:ok, date}
-          {:error, _} -> {:error, {:invalid_date, raw}}
+        with {:ok, day} <- decode_int(day, {:invalid_date, raw}),
+             {:ok, month} <- decode_int(month, {:invalid_date, raw}),
+             {:ok, year} <- decode_int(year, {:invalid_date, raw}) do
+          full_year = if year > 60, do: 1900 + year, else: 2000 + year
+
+          case Date.new(full_year, month, day) do
+            {:ok, date} -> {:ok, date}
+            {:error, _} -> {:error, {:invalid_date, raw}}
+          end
         end
     end
   end
 
   defp trim(binary), do: String.trim(binary)
 
-  defp to_int(binary) do
+  # Numeric zones: blank counts as 0 (zero-filled by producers, sometimes left
+  # blank); anything else must be all digits — a raise here would escape the
+  # {:ok, _} | {:error, _} contract and defeat `optimistic` parsing.
+  defp decode_int(binary, error) do
     case String.trim(binary) do
-      "" -> 0
-      digits -> String.to_integer(digits)
+      "" ->
+        {:ok, 0}
+
+      digits ->
+        if digits =~ ~r/^\d+$/, do: {:ok, String.to_integer(digits)}, else: {:error, error}
     end
   end
 end

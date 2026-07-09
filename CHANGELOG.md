@@ -28,6 +28,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `CFONB.Statement.rib/1` and `iban/1` now delegate to `CFONB.Rib`
   (behavior-preserving refactor).
 
+### Fixed (parser robustness)
+
+- Malformed numeric zones (date, scale, entry number, amount digits, and the
+  `05` FEE/MMO zones) now return `{:error, reason}` — and are skippable with
+  `optimistic: true` — instead of raising `ArgumentError` out of `parse/2`.
+- A physical line whose length is not a multiple of 120 no longer loses its
+  trailing chunk silently: a non-blank tail surfaces as an invalid record
+  (an all-blank tail is still treated as producer padding).
+- A `FEE` detail with a blank amount no longer reports a fee of `0.00`;
+  malformed FEE/MMO details are preserved verbatim under `details.unknown`.
+- `CFONB.Rib.from_iban/1` validates the French BBAN structure (charset
+  included), so a corrupted IBAN returns `{:error, {:invalid_iban, _}}` —
+  including through `CFONB.Virement.encode/2` — instead of raising.
+- `CFONB.Statement.rib/1` / `iban/1` raise a clear, documented `ArgumentError`
+  when the parsed statement's bank/branch/account zones cannot form a RIB.
+
 ## [0.1.0]
 
 ### Added

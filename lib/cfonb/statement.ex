@@ -77,6 +77,10 @@ defmodule CFONB.Statement do
 
   @doc """
   Returns the 23-character French RIB (`bank ++ branch ++ account ++ key`).
+
+  Raises `ArgumentError` when the statement's bank, branch or account fields
+  cannot form a RIB (blank or free-form zones in the parsed file) — see
+  `CFONB.Rib.key/3`.
   """
   @spec rib(t) :: String.t()
   def rib(%__MODULE__{bank: bank, branch: branch, account: account}) do
@@ -85,6 +89,8 @@ defmodule CFONB.Statement do
 
   @doc """
   Returns the French IBAN derived from the statement's `rib/1`.
+
+  Raises `ArgumentError` in the same cases as `rib/1`.
   """
   @spec iban(t) :: String.t()
   def iban(%__MODULE__{bank: bank, branch: branch, account: account}) do
