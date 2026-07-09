@@ -13,37 +13,7 @@ defmodule CFONB.Statement do
   for cross-compatibility.
   """
 
-  alias CFONB.Operation
-
-  # French RIB letter-to-digit table (A-I:1-9, J-R:1-9, S-Z:2-9).
-  @rib_letters %{
-    "A" => "1",
-    "B" => "2",
-    "C" => "3",
-    "D" => "4",
-    "E" => "5",
-    "F" => "6",
-    "G" => "7",
-    "H" => "8",
-    "I" => "9",
-    "J" => "1",
-    "K" => "2",
-    "L" => "3",
-    "M" => "4",
-    "N" => "5",
-    "O" => "6",
-    "P" => "7",
-    "Q" => "8",
-    "R" => "9",
-    "S" => "2",
-    "T" => "3",
-    "U" => "4",
-    "V" => "5",
-    "W" => "6",
-    "X" => "7",
-    "Y" => "8",
-    "Z" => "9"
-  }
+  alias CFONB.{Operation, Rib}
 
   @type t :: %__MODULE__{
           bank: String.t(),
@@ -110,44 +80,14 @@ defmodule CFONB.Statement do
   """
   @spec rib(t) :: String.t()
   def rib(%__MODULE__{bank: bank, branch: branch, account: account}) do
-    numeric_account = account |> String.upcase() |> convert_letters() |> String.to_integer()
-
-    key =
-      97 -
-        rem(
-          String.to_integer(bank) * 89 + String.to_integer(branch) * 15 + numeric_account * 3,
-          97
-        )
-
-    bank <> branch <> account <> pad2(key)
+    Rib.rib(bank, branch, account)
   end
 
   @doc """
   Returns the French IBAN derived from the statement's `rib/1`.
   """
   @spec iban(t) :: String.t()
-  def iban(%__MODULE__{} = statement) do
-    rib = rib(statement)
-    normalized = (rib <> "FR00") |> String.upcase() |> iban_normalize()
-    key = 98 - rem(String.to_integer(normalized), 97)
-
-    "FR" <> pad2(key) <> rib
+  def iban(%__MODULE__{bank: bank, branch: branch, account: account}) do
+    Rib.iban(bank, branch, account)
   end
-
-  defp convert_letters(account) do
-    account
-    |> String.graphemes()
-    |> Enum.map_join("", &Map.get(@rib_letters, &1, &1))
-  end
-
-  defp iban_normalize(string) do
-    string
-    |> String.to_charlist()
-    |> Enum.map_join("", fn
-      char when char in ?A..?Z -> Integer.to_string(char - 55)
-      char -> <<char>>
-    end)
-  end
-
-  defp pad2(number), do: number |> Integer.to_string() |> String.pad_leading(2, "0")
 end

@@ -1,7 +1,7 @@
 defmodule CFONB.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.2.0"
   @source_url "https://github.com/nseaSeb/cfonb-elixir"
 
   def project do
@@ -33,15 +33,19 @@ defmodule CFONB.MixProject do
   end
 
   defp description do
-    "Parser for CFONB bank files (French banking standard). Starts with the " <>
-      "120-character account statement (relevé de compte)."
+    "Parser and emitter for CFONB bank files (French banking standard): parses " <>
+      "the 120-character account statement (relevé de compte) and generates " <>
+      "160-character transfer orders (ordres de virement)."
   end
 
   defp package do
     [
       licenses: ["MIT"],
+      files:
+        ~w(lib mix.exs .formatter.exs README.md FORMAT.md FORMAT-VIREMENT.md CHANGELOG.md LICENSE),
       links: %{
         "GitHub" => @source_url,
+        "Changelog" => "#{@source_url}/blob/master/CHANGELOG.md",
         "Inspired by (Ruby)" => "https://github.com/pennylane-hq/cfonb"
       }
     ]
@@ -50,7 +54,8 @@ defmodule CFONB.MixProject do
   defp docs do
     [
       main: "readme",
-      extras: ["README.md", "FORMAT.md"]
+      source_ref: "v#{@version}",
+      extras: ["README.md", "FORMAT.md", "FORMAT-VIREMENT.md", "CHANGELOG.md"]
     ]
   end
 end
