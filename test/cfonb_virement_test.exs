@@ -238,37 +238,61 @@ defmodule CFONB.VirementTest do
     end
 
     test "rejects an over-length account number instead of truncating it" do
-      benef = %Beneficiaire{
-        nom: "A",
-        etablissement: "30004",
-        guichet: "00003",
-        compte: "123456789012",
-        montant: Decimal.new("1")
-      }
+      benef = %{beneficiaire(Decimal.new("1")) | compte: "123456789012"}
 
       assert {:error, {:account_too_long, "123456789012"}} = Virement.encode(order_with([benef]))
+    end
+
+    test "rejects an empty or charset-invalid account instead of emitting it blank/corrupted" do
+      empty = %{beneficiaire(Decimal.new("1")) | compte: ""}
+      assert {:error, {:invalid_account, ""}} = Virement.encode(order_with([empty]))
+
+      corrupt = %{beneficiaire(Decimal.new("1")) | compte: "12345#789"}
+      assert {:error, {:invalid_account, "12345#789"}} = Virement.encode(order_with([corrupt]))
+    end
+
+    test "rejects a missing or blank name (zone C2 is mandatory)" do
+      assert {:error, {:missing_name, :nom_emetteur}} =
+               Virement.encode(order_with([beneficiaire(Decimal.new("1"))], %{nom_emetteur: nil}))
+
+      assert {:error, {:missing_name, :beneficiaire}} =
+               Virement.encode(order_with([%{beneficiaire(Decimal.new("1")) | nom: "  "}]))
+    end
+
+    test "rejects an over-length or non-string numero_emetteur instead of truncating/crashing" do
+      order = order_with([beneficiaire(Decimal.new("1"))], %{numero_emetteur: "1234567"})
+      assert {:error, {:numero_emetteur_too_long, "1234567"}} = Virement.encode(order)
+
+      order = order_with([beneficiaire(Decimal.new("1"))], %{numero_emetteur: 123_456})
+      assert {:error, {:invalid_field, :numero_emetteur}} = Virement.encode(order)
+    end
+
+    test "rejects amounts whose cents overflow the 16-digit zone, and overflowing totals" do
+      huge = beneficiaire(Decimal.new("100000000000000"))
+      assert {:error, {:amount_too_large, _}} = Virement.encode(order_with([huge]))
+
+      # Each fits the zone, but their 08-record sum does not.
+      big = Decimal.new("60000000000000")
+      order = order_with([beneficiaire(big), beneficiaire(big)])
+      assert {:error, {:total_too_large, _}} = Virement.encode(order)
+    end
+
+    test "rejects contradictory bank coordinates (both IBAN and split RIB)" do
+      order =
+        order_with([beneficiaire(Decimal.new("1"))], %{iban: "FR1420041010050500013M02606"})
+
+      assert {:error, :ambiguous_bank_coordinates} = Virement.encode(order)
+    end
+
+    test "rejects a non-string optional text field instead of crashing" do
+      benef = %{beneficiaire(Decimal.new("1")) | libelle: 42}
+      assert {:error, {:invalid_field, :libelle}} = Virement.encode(order_with([benef]))
     end
   end
 
   describe "Virement.encode!/2" do
     test "returns the file directly on success" do
-      order = %Virement{
-        nom_emetteur: "X",
-        etablissement: "30004",
-        guichet: "00003",
-        compte: "12345678901",
-        beneficiaires: [
-          %Beneficiaire{
-            nom: "A",
-            etablissement: "30004",
-            guichet: "00003",
-            compte: "12345678901",
-            montant: Decimal.new("1")
-          }
-        ]
-      }
-
-      assert is_binary(Virement.encode!(order))
+      assert is_binary(Virement.encode!(order_with([beneficiaire(Decimal.new("1"))])))
     end
 
     test "raises on invalid input" do

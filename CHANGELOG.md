@@ -11,7 +11,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Émission of transfer orders (CFONB 160).** `CFONB.Virement.encode/2` and
   `encode!/2` generate an ordinary transfer order (code opération `02`) as
   `03`/`06`/`08` records, 160 characters each. Bank coordinates are accepted as
-  an IBAN (decomposed and key-checked) or as split RIB components.
+  an IBAN (decomposed and key-checked) or as split RIB components — never both
+  on the same struct (rejected as ambiguous).
+- Payment-safety validation in `encode/2`: mandatory names, account charset
+  and length, émetteur-number length and type, amount and 08-total bounded to
+  the 16-digit cents zone — every invalid input returns `{:error, reason}`
+  instead of silently truncating, emitting blank zones, or raising.
 - `CFONB.Encode` — fixed-width field formatting helpers (numeric, alphanumeric,
   unsigned-cents amount, `JJMMA` date, character-set sanitization).
 - `CFONB.Rib` — shared RIB key computation and IBAN derivation, including

@@ -71,13 +71,22 @@ defmodule CFONB.Encode do
       raise ArgumentError, "amount must not be negative: #{Decimal.to_string(amount)}"
     end
 
-    cents = Decimal.mult(amount, 100)
-
-    if Decimal.equal?(cents, Decimal.round(cents, 0)) do
-      numeric(Decimal.to_integer(Decimal.round(cents, 0)), len)
+    if whole_cents?(amount) do
+      numeric(amount |> Decimal.mult(100) |> Decimal.round(0) |> Decimal.to_integer(), len)
     else
       raise ArgumentError, "amount has more than two decimals: #{Decimal.to_string(amount)}"
     end
+  end
+
+  @doc """
+  Whether the euro amount is representable as a whole number of cents (at most
+  two decimal places). Single source of the precision rule used both by
+  `centimes/2` and by callers validating input up front.
+  """
+  @spec whole_cents?(Decimal.t()) :: boolean
+  def whole_cents?(%Decimal{} = amount) do
+    cents = Decimal.mult(amount, 100)
+    Decimal.equal?(cents, Decimal.round(cents, 0))
   end
 
   @doc """
@@ -88,7 +97,7 @@ defmodule CFONB.Encode do
   def date_jjmma(nil), do: String.duplicate(" ", 5)
 
   def date_jjmma(%Date{year: year, month: month, day: day}) do
-    pad2(day) <> pad2(month) <> Integer.to_string(rem(year, 10))
+    numeric(day, 2) <> numeric(month, 2) <> Integer.to_string(rem(year, 10))
   end
 
   @doc """
@@ -111,6 +120,4 @@ defmodule CFONB.Encode do
   """
   @spec blank(non_neg_integer) :: String.t()
   def blank(len), do: String.duplicate(" ", len)
-
-  defp pad2(number), do: number |> Integer.to_string() |> String.pad_leading(2, "0")
 end
